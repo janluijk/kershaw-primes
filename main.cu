@@ -49,19 +49,19 @@ __global__ void kershaw_prime_kernel(unsigned int* primes, unsigned int* results
 
     unsigned int base = long_val % p;
 
-    val = base;
+    long_val = base;
     count = 1;
     unsigned int limit = (p - 1) / order;
 
     while (count < limit) {
-      val = val * base;
+      long_val = long_val * base;
       count++;
 
-      if (val > p) {
-        val = val % p;
+      if (long_val > p) {
+        long_val = long_val % p;
       }
 
-      unsigned int result = val;
+      unsigned int result = long_val;
       if (3 * result > p) {
         result = (3 * result) % p;
         if (result == 2) {
