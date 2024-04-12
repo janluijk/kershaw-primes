@@ -3,6 +3,8 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <thread>
+#include <mutex>
 
 // CPU
 std::vector<unsigned int> read_primes_from_file(const std::string &filename);
@@ -10,7 +12,7 @@ std::vector<unsigned int> find_divisors(unsigned int n);
 unsigned int mod_exp(long long base, unsigned int exp, long long n);
 
 // GPU
-__global__ void kershaw_prime_kernel(unsigned int* primes, unsigned int* orders, unsigned int* results, std::size_t size);
+__global__ void kershaw_prime_kernel(unsigned int* primes, unsigned int* orders, std::size_t size);
 __device__ unsigned int compute_order(unsigned int p);
 __device__ unsigned int compute_base(unsigned int p, unsigned int order);
 __device__ bool compute_mod(unsigned int p, unsigned int order, unsigned int base);
@@ -26,23 +28,41 @@ int main(int argc, char *argv[]) {
   auto start = std::chrono::high_resolution_clock::now();
 
   std::vector<unsigned int> primes = read_primes_from_file(filename);
-  std::vector<unsigned int> results;
-  std::vector<unsigned int> orders;
-  // std::vector<unsigned int> timing_data;
+  std::vector<std::pair<unsigned int, unsigned int>> prime_order; // Store results with prime number
   std::size_t num_primes = primes.size();
-  results.reserve(num_primes * sizeof(unsigned int));
-  orders.reserve(num_primes * sizeof(unsigned int));
-  // timing_data.reserve(num_primes * 4 * sizeof(unsiged int));
 
-  // Find orders 
-  for(unsigned int prime: primes) {
-    std::vector<unsigned int> divisors = find_divisors(prime - 1);
-    for(unsigned int divisor : divisors) {
-      if (mod_exp(2, divisor, prime) == 1) {
-        orders.push_back(divisor);
-        break;      
+  prime_order.reserve(num_primes * sizeof(std::pair<unsigned int, unsigned int>));
+
+  unsigned int num_threads = std::thread::hardware_concurrency();
+  std::size_t chunk_size = primes.size() / num_threads;
+  std::vector<std::vector<unsigned int>> chunks(num_threads);
+  for (unsigned int i = 0; i < num_threads; i++) {
+    auto start = primes.begin() + i * chunk_size;
+    auto end = (i == num_threads - 1) ? primes.end() : start + chunk_size;
+    chunks[i].assign(start, end);
+  }
+  std::mutex prime_order_mutex;
+  std::vector<std::thread> threads;
+  for (unsigned int i = 0; i < num_threads; i++) {
+    threads.emplace_back([&, i]() {
+      for (unsigned int prime : chunks[i]) {
+        std::vector<unsigned int> divisors = find_divisors(prime - 1);
+        unsigned int order;
+        for(unsigned int divisor : divisors) {
+          if (mod_exp(2, divisor, prime) == 1) {
+            order = divisor;
+            break;      
+          }
+        }
+        prime_order_mutex.lock();
+        prime_order.emplace_back(prime, order);
+        prime_order_mutex.unlock();
       }
-    }
+    });
+  }
+
+  for (std::thread &t : threads) {
+    t.join();
   }
 
   auto end = std::chrono::high_resolution_clock::now();
@@ -54,53 +74,25 @@ int main(int argc, char *argv[]) {
 
   unsigned int *d_primes;
   unsigned int *d_orders;
-  unsigned int *d_results;
-  // unsigned int *d_timing_data;
 
   cudaMalloc(&d_primes, num_primes * sizeof(unsigned int));
   cudaMalloc(&d_orders, num_primes * sizeof(unsigned int));
-  cudaMalloc(&d_results, num_primes * sizeof(unsigned int));
-  // cudaMalloc(&d_timing_data, 4 * num_primes * sizeof(unsigned int));
 
-  cudaMemcpy(d_primes, primes.data(), num_primes * sizeof(unsigned int), cudaMemcpyHostToDevice);
-  cudaMemcpy(d_orders, orders.data(), num_primes * sizeof(unsigned int), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_primes, &prime_order[0].first, num_primes * sizeof(unsigned int), cudaMemcpyHostToDevice);
+  cudaMemcpy(d_orders, &prime_order[0].second, num_primes * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
   unsigned int block_size = 256;
   unsigned int num_blocks = (num_primes + block_size - 1) / block_size;
   start = std::chrono::high_resolution_clock::now();
   
-  kershaw_prime_kernel<<<num_blocks, block_size>>>(d_primes, d_orders, d_results, num_primes);
+  kershaw_prime_kernel<<<num_blocks, block_size>>>(d_primes, d_orders, num_primes);
 
   cudaDeviceSynchronize();
 
-  cudaMemcpy(results.data(), d_results, num_primes * sizeof(unsigned int), cudaMemcpyDeviceToHost);
-  // cudaMemcpy(timing_data.data(), d_timing_data, 4 * num_primes * sizeof(unsigned int), cudaMemcpyDeviceToHost);
-
   cudaFree(d_primes);
   cudaFree(d_orders);
-  cudaFree(d_results);
-  // cudaFree(d_timing_data);
-
-  for (std::size_t i = 0; i < num_primes; ++i) {
-    if (results[i])
-      std::cout << "Kershaw Prime: " << results[i] << std::endl;
-  }
 
   end = std::chrono::high_resolution_clock::now();
-
-  // for (std::size_t i = 0; i < num_primes; ++i) {
-  //   std::cout << 
-  //   timing_data[i * 4]
-  //   << ' ' << 
-  //   timing_data[i * 4 + 1]
-  //   << ' ' << 
-  //   timing_data[i * 4 + 2]
-  //   << ' ' << 
-  //   timing_data[i * 4 + 3]
-  //   << std::endl;
-  // }
-
-
   elapsed_seconds = end - start;
   std::cout << "GPU: Elapsed time: " << elapsed_seconds.count() << "s\n";
 
@@ -210,28 +202,15 @@ __device__ bool compute_mod(unsigned int p, unsigned int order, unsigned int bas
   return false;
 }
 
-__global__ void kershaw_prime_kernel(unsigned int* primes, unsigned int* orders, unsigned int* results, std::size_t size) {
+__global__ void kershaw_prime_kernel(unsigned int* primes, unsigned int* orders, std::size_t size) {
   unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < size) {
-    // unsigned int start_order = clock();
-    // unsigned int end_order = clock();
-    // unsigned int start_base = clock();
-    // unsigned int end_base = clock();
-    // unsigned int start_mod = clock();
-    // unsigned int end_mod = clock();
-    // timing_data[idx * 4] = end_order - start_order;
-    // timing_data[idx * 4 + 1] = end_base - start_base;
-    // timing_data[idx * 4 + 2] = end_mod - start_mod;
-    // timing_data[idx * 4 + 3] = (end_mod - start_order);
-
-    unsigned int p = primes[idx];
+    unsigned int p      = primes[idx];
     unsigned int order  = orders[idx];
     unsigned int base   = compute_base(p, order);
     bool found          = compute_mod(p, order, base);
 
-    if (found) {
+    if (found)
       printf("Prime found! Prime: %d, Order: %d, Base: %d\n", p, order, base);
-      results[idx] = p;
-    }
   }
 }
