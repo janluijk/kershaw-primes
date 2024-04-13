@@ -10,11 +10,11 @@
 std::vector<unsigned int> read_primes_from_file(const std::string &filename);
 
 // GPU
-__global__ void kershaw_prime_kernel(unsigned int* primes, std::size_t size);
-__device unsigned int mod_exp(unsigned int base, unsigned int exp, unsigned int p);
-__device__ unsigned int compute_order(unsigned int p);
-__device__ unsigned int compute_base(unsigned int p, unsigned int order);
-__device__ bool compute_mod(unsigned int p, unsigned int order, unsigned int base);
+__global__ void kershaw_prime_kernel(uint32_t* primes, std::size_t size);
+__device__ uint32_t mod_exp(unsigned long long base, uint32_t exp, uint32_t p);
+__device__ uint32_t compute_order(uint32_t p);
+__device__ uint32_t compute_base(uint32_t p, uint32_t order);
+__device__ bool compute_mod(uint32_t p, uint32_t order, uint32_t base);
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
@@ -36,13 +36,13 @@ int main(int argc, char *argv[]) {
   // GPU
   start = std::chrono::high_resolution_clock::now();
 
-  unsigned int *d_primes;
+  uint32_t *d_primes;
 
-  cudaMalloc(&d_primes, num_primes * sizeof(unsigned int));
-  cudaMemcpy(d_primes, primes.data(), num_primes * sizeof(unsigned int), cudaMemcpyHostToDevice);
+  cudaMalloc(&d_primes, num_primes * sizeof(uint32_t));
+  cudaMemcpy(d_primes, primes.data(), num_primes * sizeof(uint32_t), cudaMemcpyHostToDevice);
 
-  unsigned int block_size = 256;
-  unsigned int num_blocks = (num_primes + block_size - 1) / block_size;
+  uint32_t block_size = 256;
+  uint32_t num_blocks = (num_primes + block_size - 1) / block_size;
   start = std::chrono::high_resolution_clock::now();
   
   kershaw_prime_kernel<<<num_blocks, block_size>>>(d_primes, num_primes);
@@ -77,44 +77,68 @@ std::vector<unsigned int> read_primes_from_file(const std::string &filename) {
 }
 
 // GPU
-__device__ unsigned int compute_order(unsigned int p) {
-  const unsigned int n = p - 1;
-  const unsigned int lim = sqrt(n);
-  unsigned int divisors[lim + 1];
+__global__ void kershaw_prime_kernel(uint32_t * primes, std::size_t size) {
+  uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < size) {
+    uint32_t p      = primes[idx];
+    uint32_t order  = compute_order(p);
+    uint32_t base   = compute_base(p, order);
+    bool found      = compute_mod(p, order, base);
+
+    if (found)
+      printf("Prime found! Prime: %d, Order: %d, Base: %d\n", p, order, base);
+  }
+}
+
+__device__ uint32_t compute_order(uint32_t p) {
+  uint32_t n = p - 1;
+  const uint32_t lim = (uint32_t) sqrt((double)n);
+  uint32_t *divisors = (uint32_t*)malloc((lim + 1) * sizeof(uint32_t));
   int num_divisors = 0;
 
-  for (unsigned int o = 1; i <= lim; ++i) {
+  for (uint32_t i = 1; i <= lim; ++i) {
     if (n % i == 0) { // Found divisor
-      if (mod_exp(2, i, p) == 1)
+      if (mod_exp(2, i, p) == 1) {
+        free(divisors);
         return i;
+      }
       
-      unsigned int inverse_divisor = n / i;
+      uint32_t inverse_divisor = n / i;
       if (i != inverse_divisor)
-        divisors[num_divisors++] = inverse_divisor
+        divisors[num_divisors++] = inverse_divisor;
     }
   }
 
   for (int j = num_divisors - 1; j >= 0; --j) {
-    if (mod_exp(2, divisors[j], p) == 1)
+    if (mod_exp(2, divisors[j], p) == 1) {
+      free(divisors);
       return divisors[j];
+    }
   }
 
-  return -1;
+  free(divisors);
+  return 1; // Shut up compiler
 }
 
-__device unsigned int mod_exp(unsigned int base, unsigned int exp, unsigned int p) [
-  unsigned int result = 1;
-  base = base % p;
+__device__ uint32_t mod_exp(unsigned long long base, uint32_t exp, uint32_t p) {
+  unsigned long long result = 1;
+
   while (exp) {
-    if (exp & 1)
+    if (exp & 1) {
       result = (result * base) % p;
+      if (result > p) 
+        result = result % p;
+    }
     
+    base = base * base;
+    if (base > p) 
+      base = base % p;
     exp >>= 1;
-    base = (base * base) % p;
   }
+  return result;
 }
 
-__device__ unsigned int compute_base(unsigned int p, unsigned int order) {
+__device__ uint32_t compute_base(uint32_t p, uint32_t order) {
   unsigned long long result = 1;
   unsigned long long base = 3;
   while (order > 0) {
@@ -128,10 +152,10 @@ __device__ unsigned int compute_base(unsigned int p, unsigned int order) {
   return result;
 }
 
-__device__ bool compute_mod(unsigned int p, unsigned int order, unsigned int base) {
+__device__ bool compute_mod(uint32_t p, uint32_t order, uint32_t base) {
   unsigned long long val = base;
-  unsigned int count = 1;
-  const unsigned int limit = (p - 1) / order;
+  uint32_t count = 1;
+  const uint32_t limit = (p - 1) / order;
 
   while (count < limit) {
     val = val * base;
@@ -140,7 +164,7 @@ __device__ bool compute_mod(unsigned int p, unsigned int order, unsigned int bas
     if (val > p)
       val = val % p;
 
-    unsigned int result = 3 * val;
+    uint32_t result = 3 * val;
     if (result > p) {
       result = result % p;
       if (result == 2)
@@ -148,17 +172,4 @@ __device__ bool compute_mod(unsigned int p, unsigned int order, unsigned int bas
     }
   }
   return false;
-}
-
-__global__ void kershaw_prime_kernel(unsigned int* primes, unsigned int* orders, std::size_t size) {
-  unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < size) {
-    unsigned int p      = primes[idx];
-    unsigned int order  = orders[idx];
-    unsigned int base   = compute_base(p, order);
-    bool found          = compute_mod(p, order, base);
-
-    if (found)
-      printf("Prime found! Prime: %d, Order: %d, Base: %d\n", p, order, base);
-  }
 }
