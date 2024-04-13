@@ -11,7 +11,7 @@ std::vector<unsigned int> read_primes_from_file(const std::string &filename);
 unsigned int compute_order(unsigned int p);
 unsigned int compute_base(unsigned int p, unsigned int order);
 bool compute_mod(unsigned int p, unsigned int order, unsigned int base);
-unsigned int mod_exp(long long base, unsigned int exp, long long n);
+unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned long long n);
 
 int main(int argc, char *argv[]) {
   // Arguments
@@ -146,10 +146,10 @@ bool compute_mod(unsigned int p, unsigned int order, unsigned int base) {
   return false;
 }
 
-unsigned int mod_exp(long long base, unsigned int exp, long long p) {
-  long long result = 1;
+unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned long long p) {
+  unsigned long long result = 1;
 
-  while (exp > 0) {
+  while (exp) {
     if (exp & 1) {
       result = (result * base);
       if (result > p)
