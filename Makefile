@@ -4,8 +4,8 @@ kershaw_primes: main.cpp
 .PHONY: test clean
 
 test: kershaw_primes
-	./kershaw_primes primes12.txt
+	./kershawprimes primestest.txt
 
 clean:
-	rm -f kershaw_primes
+	rm -f kershawprimes
 
