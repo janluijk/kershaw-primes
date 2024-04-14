@@ -16,49 +16,38 @@ unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned int p);
 int main() {
   for(unsigned int i = 2; i < 4e9; i += 2e7) {
     auto start = std::chrono::high_resolution_clock::now();
-
     std::vector<unsigned int> primes = compute_primes(i, i + 2e7);
-    std::size_t num_primes = primes.size();
-
-    unsigned int num_threads = std::thread::hardware_concurrency();
-
-    std::size_t chunk_size = num_primes / num_threads;
-    std::vector<std::vector<unsigned int>> chunks(num_threads);
-
-    for (unsigned int i = 0; i < num_threads; i++) {
-      auto start = primes.begin() + i * chunk_size;
-      auto end = (i == num_threads - 1) ? primes.end() : start + chunk_size;
-
-      chunks[i].assign(start, end);
-    }
-
-    std::vector<std::thread> threads;
-    for (unsigned int i = 0; i < num_threads; i++) {
-      threads.emplace_back([&, i]() {
-        for (unsigned int prime : chunks[i]) {
-
-          // Use Fermat's little theorem to find ord_p(2)
-          unsigned int order  = compute_order(prime);
-
-          // Compute 3^ord % p
-          unsigned int base   = mod_exp(3, order, prime);
-
-          // compute 3^(nm-1) % p
-          bool found          = compute_mod(prime, order, base);
-          if (found) 
-            std::cout << "Found a prime: " << prime << " Order: " << order << " Base: " << base << std::endl; 
-        }
-      });
-    }
-
-    for (std::thread &t : threads) {
-      t.join();
-    }
-
     auto end = std::chrono::high_resolution_clock::now();
 
-    std::chrono::duration<double> elapsed_seconds = end - start;
-    std::cout << "CPU: Elapsed time: " << elapsed_seconds.count() << "s\n";
+    std::chrono::duration<double> comp_primes = end - start;
+    std::cout << "[Computing primes] Elapsed time: " << comp_primes.count() << "s\n";
+
+    std::chrono::duration<double> comp_order_time = start - start;
+    std::chrono::duration<double> comp_base_time = start - start;
+    std::chrono::duration<double> comp_mod_time = start - start;
+    for (unsigned int prime : primes) {
+
+      start = std::chrono::high_resolution_clock::now();
+      unsigned int order  = compute_order(prime);
+      end = std::chrono::high_resolution_clock::now();
+      comp_order_time += (end - start);
+
+      start = std::chrono::high_resolution_clock::now();
+      unsigned int base   = mod_exp(3, order, prime);
+      end = std::chrono::high_resolution_clock::now();
+      comp_base_time += (end - start);
+
+      start = std::chrono::high_resolution_clock::now();
+      bool found          = compute_mod(prime, order, base);
+      end = std::chrono::high_resolution_clock::now();
+      comp_mod_time += (end - start);
+
+      if (found) 
+        std::cout << "Found a prime: " << prime << " Order: " << order << " Base: " << base << std::endl; 
+    }
+    std::cout << "[Compute Order] Elapsed time: " << comp_order_time.count() << "s\n";
+    std::cout << "[Compute Base] Elapsed time: " << comp_base_time.count() << "s\n";
+    std::cout << "[Compute Mod] Elapsed time: " << comp_mod_time.count() << "s\n";
   }
   
   return 0;
