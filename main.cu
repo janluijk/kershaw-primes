@@ -37,17 +37,33 @@ int main(int argc, char *argv[]) {
   start = std::chrono::high_resolution_clock::now();
 
   uint32_t *d_primes;
+  cudaError_t cuda_error;
 
-  cudaMalloc(&d_primes, num_primes * sizeof(uint32_t));
-  cudaMemcpy(d_primes, primes.data(), num_primes * sizeof(uint32_t), cudaMemcpyHostToDevice);
+  cuda_error = cudaMalloc(&d_primes, num_primes * sizeof(uint32_t));
+  if(cuda_error != cudaSuccess) {
+      std::cerr << "CUDA error (cudaMalloc): " << cudaGetErrorString(cuda_error) << std::endl;
+  }
+
+  cuda_error = cudaMemcpy(d_primes, primes.data(), num_primes * sizeof(uint32_t), cudaMemcpyHostToDevice);
+  if(cuda_error != cudaSuccess) {
+      std::cerr << "CUDA error (cudaMemcpy HostToDevice): " << cudaGetErrorString(cuda_error) << std::endl;
+  }
 
   uint32_t block_size = 256;
   uint32_t num_blocks = (num_primes + block_size - 1) / block_size;
-  start = std::chrono::high_resolution_clock::now();
-  
+
   kershaw_prime_kernel<<<num_blocks, block_size>>>(d_primes, num_primes);
+  cuda_error = cudaGetLastError();
+  if(cuda_error != cudaSuccess) {
+      std::cerr << "CUDA error (kernel launch): " << cudaGetErrorString(cuda_error) << std::endl;
+  }
 
   cudaDeviceSynchronize();
+
+  cuda_error = cudaGetLastError(); // Check for any errors during kernel execution
+  if(cuda_error != cudaSuccess) {
+      std::cerr << "CUDA error (kernel execution): " << cudaGetErrorString(cuda_error) << std::endl;
+  }
 
   cudaFree(d_primes);
 
@@ -77,7 +93,7 @@ std::vector<unsigned int> read_primes_from_file(const std::string &filename) {
 }
 
 // GPU
-__global__ void kershaw_prime_kernel(uint32_t * primes, std::size_t size) {
+__global__ void kershaw_prime_kernel(uint32_t *primes, std::size_t size) {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < size) {
     uint32_t p      = primes[idx];
@@ -85,39 +101,39 @@ __global__ void kershaw_prime_kernel(uint32_t * primes, std::size_t size) {
     uint32_t base   = compute_base(p, order);
     bool found      = compute_mod(p, order, base);
 
+
     if (found)
       printf("Prime found! Prime: %d, Order: %d, Base: %d\n", p, order, base);
   }
 }
 
-__device__ uint32_t compute_order(uint32_t p) {
+__device__ uint32_t compute_order(const uint32_t p) {
   uint32_t n = p - 1;
   const uint32_t lim = (uint32_t) sqrt((double)n);
-  uint32_t *divisors = (uint32_t*)malloc((lim + 1) * sizeof(uint32_t));
+  uint32_t divisors[150000];
   int num_divisors = 0;
 
-  for (uint32_t i = 1; i <= lim; ++i) {
+  for (uint32_t i = 1; i < lim; ++i) {
     if (n % i == 0) { // Found divisor
       if (mod_exp(2, i, p) == 1) {
-        free(divisors);
         return i;
       }
       
       uint32_t inverse_divisor = n / i;
       if (i != inverse_divisor)
-        divisors[num_divisors++] = inverse_divisor;
+        divisors[num_divisors] = inverse_divisor;
+        num_divisors++;
     }
   }
 
   for (int j = num_divisors - 1; j >= 0; --j) {
     if (mod_exp(2, divisors[j], p) == 1) {
-      free(divisors);
-      return divisors[j];
+      unsigned int result = divisors[j]; 
+      return result;
     }
   }
 
-  free(divisors);
-  return 1; // Shut up compiler
+  return p - 1; // Shut up compiler
 }
 
 __device__ uint32_t mod_exp(unsigned long long base, uint32_t exp, uint32_t p) {
