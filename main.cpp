@@ -8,83 +8,79 @@
 #include <mutex>
 
 std::vector<unsigned int> read_primes_from_file(const std::string &filename);
+std::vector<unsigned int> compute_primes(unsigned int from, unsigned int to);
 unsigned int compute_order(unsigned int p);
-unsigned int compute_base(unsigned int p, unsigned int order);
 bool compute_mod(unsigned int p, unsigned int order, unsigned int base);
-unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned long long n);
+unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned int p);
 
-int main(int argc, char *argv[]) {
-  // Arguments
-  if (argc != 2) {
-    std::cerr << "usage: <filename>" << std::endl;
-    std::exit(EXIT_FAILURE);
+int main() {
+  for(unsigned int i = 2; i < 4e9; i += 2e7) {
+    auto start = std::chrono::high_resolution_clock::now();
+
+    std::vector<unsigned int> primes = compute_primes(i, i + 2e7);
+    std::size_t num_primes = primes.size();
+
+    unsigned int num_threads = std::thread::hardware_concurrency();
+
+    std::size_t chunk_size = num_primes / num_threads;
+    std::vector<std::vector<unsigned int>> chunks(num_threads);
+
+    for (unsigned int i = 0; i < num_threads; i++) {
+      auto start = primes.begin() + i * chunk_size;
+      auto end = (i == num_threads - 1) ? primes.end() : start + chunk_size;
+
+      chunks[i].assign(start, end);
+    }
+
+    std::vector<std::thread> threads;
+    for (unsigned int i = 0; i < num_threads; i++) {
+      threads.emplace_back([&, i]() {
+        for (unsigned int prime : chunks[i]) {
+
+          // Use Fermat's little theorem to find ord_p(2)
+          unsigned int order  = compute_order(prime);
+
+          // Compute 3^ord % p
+          unsigned int base   = mod_exp(3, order, prime);
+
+          // compute 3^(nm-1) % p
+          bool found          = compute_mod(prime, order, base);
+          if (found) 
+            std::cout << "Found a prime: " << prime << " Order: " << order << " Base: " << base << std::endl; 
+        }
+      });
+    }
+
+    for (std::thread &t : threads) {
+      t.join();
+    }
+
+    auto end = std::chrono::high_resolution_clock::now();
+
+    std::chrono::duration<double> elapsed_seconds = end - start;
+    std::cout << "CPU: Elapsed time: " << elapsed_seconds.count() << "s\n";
   }
-  std::string filename = argv[1];
-
-
-  auto start = std::chrono::high_resolution_clock::now();
-
-  std::vector<unsigned int> primes = read_primes_from_file(filename);
-  std::size_t num_primes = primes.size();
-
-  unsigned int num_threads = std::thread::hardware_concurrency();
-
-  std::size_t chunk_size = num_primes / num_threads;
-  std::vector<std::vector<unsigned int>> chunks(num_threads);
-
-  for (unsigned int i = 0; i < num_threads; i++) {
-    auto start = primes.begin() + i * chunk_size;
-    auto end = (i == num_threads - 1) ? primes.end() : start + chunk_size;
-
-    chunks[i].assign(start, end);
-  }
-
-  std::vector<std::thread> threads;
-  for (unsigned int i = 0; i < num_threads; i++) {
-    threads.emplace_back([&, i]() {
-      for (unsigned int prime : chunks[i]) {
-
-        // Use Fermat's little theorem to find ord_p(2)
-        unsigned int order  = compute_order(prime);
-
-        // Compute 3^ord % p
-        unsigned int base   = compute_base(prime, order);
-
-        // compute 3^(nm-1) % p
-        bool found          = compute_mod(prime, order, base);
-        if (found) 
-          std::cout << "Found a prime: " << prime << " Order: " << order << " Base: " << base << std::endl; 
-      }
-    });
-  }
-
-  for (std::thread &t : threads) {
-    t.join();
-  }
-
-  auto end = std::chrono::high_resolution_clock::now();
-
-  std::chrono::duration<double> elapsed_seconds = end - start;
-  std::cout << "CPU: Elapsed time: " << elapsed_seconds.count() << "s\n";
   
   return 0;
 }
 
-std::vector<unsigned int> read_primes_from_file(const std::string &filename) {
+std::vector<unsigned int> compute_primes(unsigned int from, unsigned int to) {
+  std::vector<bool> isPrime(to - from + 1, true);
   std::vector<unsigned int> primes;
-  std::ifstream file(filename);
-  if (!file.is_open()) {
-    std::cerr << "Error: Unable to open file " << filename << std::endl;
-    return primes;
+
+  for(unsigned int p = 2; p * p <= to; ++p) {
+    for (unsigned int i = std::max(p * p, (from + p - 1) / p * p); i <= to; i += p) {
+        isPrime[i - from] = false;
+    }
   }
 
-  unsigned int prime;
-  while (file >> prime)
-    primes.push_back(prime);
-  file.close();
+  for (int i = from; i <= to; ++i) {
+    if (isPrime[i - from]) {
+      primes.push_back(i);
+    }
+  }
 
-  std::cout << "Number of primes loaded: " << primes.size() << std::endl;
-  return primes;
+  return primes;  
 }
 
 unsigned int compute_order(unsigned int p) {
@@ -111,19 +107,6 @@ unsigned int compute_order(unsigned int p) {
   return -1;
 }
 
-unsigned int compute_base(unsigned int p, unsigned int order) {
-  unsigned long long result = 1;
-  unsigned long long base = 3;
-  while (order > 0) {
-    if (order & 1)
-      result = (result * base) % p;
-
-    base = (base * base) % p;
-    order >>= 1;
-  }
-  return result;
-}
-
 bool compute_mod(unsigned int p, unsigned int order, unsigned int base) {
   unsigned long long val = base;
   unsigned int count = 1;
@@ -146,7 +129,7 @@ bool compute_mod(unsigned int p, unsigned int order, unsigned int base) {
   return false;
 }
 
-unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned long long p) {
+unsigned int mod_exp(unsigned long long base, unsigned int exp, unsigned int p) {
   unsigned long long result = 1;
 
   while (exp) {

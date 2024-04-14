@@ -1,5 +1,5 @@
 kershaw_primes: main.cpp
-	g++ -O3 kershawprimes main.cpp
+	g++ -O3 -o kershawprimes main.cpp
 
 .PHONY: test clean
 
